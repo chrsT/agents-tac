@@ -329,7 +329,7 @@ private void entertainmentBids() {
 		  P_Utility += hotel_value; //HotelBonus
 	  }
 	  
-	  //Ignoring Entertainment
+	  //Ignoring Entertainment in this calculation
 	  return P_Utility-predictCost(day_in,day_out,hotel_type);
   }
   
