@@ -1,3 +1,9 @@
+// TAC Agent Weir by Christopher Taylor
+//		 ct345
+//	   University of Bath
+//	Computer Science Department
+//	Agents Coursework 1, 2014-15
+
 /**
  * TAC AgentWare
  * http://www.sics.se/tac        tac-dev@sics.se
@@ -130,6 +136,8 @@ import se.sics.tac.util.ArgEnumerator;
 
 import java.util.logging.*;
 
+import java.util.Arrays;
+
 public class DummyAgent extends AgentImpl {
 
   private static final Logger log =
@@ -140,10 +148,12 @@ public class DummyAgent extends AgentImpl {
   private float[] prices;
   private int n_hotels_closed;
   private int[] items_available;
+  private int[][] client_days;
 
   protected void init(ArgEnumerator args) {
     prices = new float[agent.getAuctionNo()];
     items_available = new int[agent.getAuctionNo()];
+    client_days = new int[8][2];
     n_hotels_closed = 0;
   }
 
@@ -158,6 +168,7 @@ private void allocationBids() {
 		}
 		flightBids(); 
 		hotelBids();
+		entertainmentBids();
 	}
 }
 
@@ -168,7 +179,7 @@ private void hotelBids() {
 		Bid bid = new Bid(i);
 		Quote quote = agent.getQuote(i);
 		int hqw = quote.getHQW();
-		float ask = quote.getAskPrice(); //TODO: getBidPrice() maybe?
+		float ask = quote.getBidPrice(); //TODO: getBidPrice() maybe?
 		int alloc = agent.getAllocation(i);
 		bid.addBidPoint(16,1);
 		if (hqw-alloc > 0) {
@@ -193,6 +204,44 @@ private void flightBids() {
 			bid.addBidPoint(alloc-owned,1000);
 			agent.submitBid(bid);
 		}
+	}
+}
+
+private int getEntertainmentUtil(int client, int day, int type)
+{
+	if ((client_days[client][0] <= day) && (client_days[client][2] > day)) {
+		return agent.getClientPreference(client,type);
+	}
+	return 0; 
+}
+
+private void entertainmentBids() {
+	log.fine("entertainmentBids();");
+	int[] entUtility = new int[8];
+	int day, type, n_owned, n_left;
+	for (int i = 16; i < 28; i++)
+	{
+			day = agent.getAuctionDay(i);
+			type = agent.getAuctionType(i);
+			n_owned = agent.getOwn(i);
+		for (int n = 0; n < 8; n++){
+			entUtility[n] = getEntertainmentUtil(n,day,type);	
+		}
+		Bid bid = new Bid(i);
+		Arrays.sort(entUtility);
+		n_left = n_owned;
+		for (int n = 0; n < 8; n++)
+		{
+			if (entUtility[n] <= 0) { break; }
+			if (n_left > 0) {
+				bid.addBidPoint(-1,entUtility[n]+1);
+				n_left -= 1;
+			} else {
+				bid.addBidPoint(1,entUtility[n]-1);
+			}
+		}
+		agent.submitBid(bid);
+		
 	}
 }
 
@@ -342,7 +391,7 @@ private void flightBids() {
 	  }
   }
   
-  private void allocate_package(int day_in, int day_out, int hotel_type)
+  private void allocate_package(int client,int day_in, int day_out, int hotel_type)
   {
 	  	int auction;
 	  	for (int day = day_in; day < day_out; day++)
@@ -354,6 +403,9 @@ private void flightBids() {
 				items_available[auction] -= 1;
 			}
 	  	}
+
+		client_days[client][0] = day_in;
+		client_days[client][1] = day_out;
 	  	
 	  	auction = agent.getAuctionFor(TACAgent.CAT_FLIGHT,TACAgent.TYPE_INFLIGHT,day_in);
 		if (items_available[auction] > 0) { items_available[auction] -= 1; }
@@ -408,7 +460,7 @@ private void flightBids() {
     	  }
     	  
       }
-      allocate_package(current_best_in,current_best_out,current_best_type);
+      allocate_package(i,current_best_in,current_best_out,current_best_type);
     }
   }
 
