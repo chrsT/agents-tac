@@ -136,7 +136,7 @@ import se.sics.tac.util.ArgEnumerator;
 
 import java.util.logging.*;
 
-import java.util.Arrays;
+import java.util.*;
 
 public class DummyAgent extends AgentImpl {
 
@@ -148,6 +148,7 @@ public class DummyAgent extends AgentImpl {
   private float[] prices;
   private int n_hotels_closed;
   private int[] items_available;
+  private int[] hqw_available;
   private int[][] client_days;
 
   protected void init(ArgEnumerator args) {
@@ -165,11 +166,16 @@ private void allocationBids() {
 		if (n_hotels_closed >= 1) {
        			log.fine("CALCULATING ALLOCATIONS AND SENDING BIDS"); 
 			calculateAllocation(); 
+			entertainmentBids();
 		}
 		flightBids(); 
 		hotelBids();
-		entertainmentBids();
 	}
+}
+
+private float getBasicHotelAmount()
+{
+	return 150+(n_hotels_closed*35);
 }
 
 private void hotelBids() {
@@ -181,15 +187,14 @@ private void hotelBids() {
 		int hqw = quote.getHQW();
 		float ask = quote.getBidPrice(); //TODO: getBidPrice() maybe?
 		int alloc = agent.getAllocation(i);
+		if ((alloc == 0) && (ask > 3)) { continue; }
 		bid.addBidPoint(16,1);
-		if (hqw-alloc > 0) {
-		bid.addBidPoint(hqw-alloc,ask+1);
+		if ((hqw-alloc > 0) && (ask <= 10)) {
+			bid.addBidPoint(hqw-alloc,ask+1);
 		}
 		if (alloc > 0) {
-		bid.addBidPoint(alloc,450);
+			bid.addBidPoint(alloc,getBasicHotelAmount());
 		}
-		log.fine("Submit bid: "+bid.getBidString());
-		log.fine("(HQW: "+hqw+", Ask: "+ask+", alloc: "+alloc);
 		agent.submitBid(bid);
 	}
 }
@@ -207,46 +212,32 @@ private void flightBids() {
 	}
 }
 
+private void entertainmentBids() {
+	for (int auc = 16; auc < 28; auc++) {
+		int owned = agent.getOwn(auc);
+		int alloc = agent.getAllocation(auc);
+		Bid bid = new Bid(auc);
+		if (owned > alloc) { bid.addBidPoint(alloc-owned,sell_price); }
+		if (alloc > owned) { bid.addBidPoint(alloc-owned,buy_price); } 
+		agent.submitBid(bid);
+	}
+}
+
 private int getEntertainmentUtil(int client, int day, int type)
 {
-	if ((client_days[client][0] <= day) && (client_days[client][2] > day)) {
+	if ((client_days[client][0] <= day) && (client_days[client][1] > day)) {
 		return agent.getClientPreference(client,type);
 	}
 	return 0; 
 }
 
-private void entertainmentBids() {
-	log.fine("entertainmentBids();");
-	int[] entUtility = new int[8];
-	int day, type, n_owned, n_left;
-	for (int i = 16; i < 28; i++)
-	{
-			day = agent.getAuctionDay(i);
-			type = agent.getAuctionType(i);
-			n_owned = agent.getOwn(i);
-		for (int n = 0; n < 8; n++){
-			entUtility[n] = getEntertainmentUtil(n,day,type);	
-		}
-		Bid bid = new Bid(i);
-		Arrays.sort(entUtility);
-		n_left = n_owned;
-		for (int n = 0; n < 8; n++)
-		{
-			if (entUtility[n] <= 0) { break; }
-			if (n_left > 0) {
-				bid.addBidPoint(-1,entUtility[n]+1);
-				n_left -= 1;
-			} else {
-				bid.addBidPoint(1,entUtility[n]-1);
-			}
-		}
-		agent.submitBid(bid);
-		
-	}
+private int getLength(int client)
+{
+	return client_days[client][1] - client_days[client][0];
 }
 
   public void quoteUpdated(Quote quote) {
-    log.fine("quoteUpdated running, quote = "+Integer.toString(quote.getAuction()));
+    return;
   }
 
   public void quoteUpdated(int auctionCategory) {
@@ -281,6 +272,7 @@ private void entertainmentBids() {
     items_available = new int[agent.getAuctionNo()];
 
     allocationBids();
+    current_allocations = new int[8][3];
     }
 
   public void gameStopped() {
@@ -333,10 +325,6 @@ private void entertainmentBids() {
 	  return P_Utility-predictCost(day_in,day_out,hotel_type);
   }
   
-  //TODO: Scale predicted cost as time goes by
-  private float predicted_increase_static = 15f;
-  private float predicted_increase_multiplier = 1.2f;
-  private float predicted_increase_multiplier_other_closed = 1.4f;
   private int predictCost(int day_in, int day_out, int hotel_type)
   {
 	  int auction; float predicted_increase;
@@ -362,23 +350,25 @@ private void entertainmentBids() {
 	  {
 		  auction = agent.getAuctionFor(TACAgent.CAT_HOTEL, hotel_type, i);
 		  int otherHotel = agent.getAuctionFor(TACAgent.CAT_HOTEL,otherHotelType(hotel_type),i);
-		  predicted_increase = predicted_increase_multiplier;
+		  Quote q = agent.getQuote(auction);
+	      	  Quote q2 = agent.getQuote(otherHotel);
 		  if (items_available[auction] > 0)
 		  {
-			predicted_increase = 0;
-		  }
-		  else if (agent.getQuote(auction).isAuctionClosed())
-		  {
-			  return 999999;
-		  }
-		  if (agent.getQuote(otherHotel).isAuctionClosed())
-		  {
-			  predicted_increase = predicted_increase_multiplier_other_closed;
-		  }
-		  COST_Hotel += (agent.getQuote(agent.getAuctionFor(TACAgent.CAT_HOTEL, hotel_type, i)).getAskPrice() + predicted_increase_static) * predicted_increase;
+			continue;
+		  } else if (q.isAuctionClosed()) { COST_Hotel += 99999; }
+		  COST_Hotel +=  predictHotelCost(q.getAskPrice(),q.getBidPrice(),q2.isAuctionClosed());
 	  }
 	  P_Cost = COST_Inflight + COST_Outflight + COST_Hotel;
 	  return (int)P_Cost;
+  }
+
+  //TODO: Scale predicted cost as time goes by
+  private float predicted_increase_time_period = 7.5f;
+  private float predicted_increase_multiplier = 1.2f;
+  private float predicted_increase_multiplier_other_closed = 1.4f;
+  private float predictHotelCost(float currentAskPrice, float currentBidPrice, boolean other_closed)
+  {
+	return currentAskPrice;
   }
   
   private int otherHotelType(int hotelType)
@@ -391,83 +381,164 @@ private void entertainmentBids() {
 	  }
   }
   
-  private void allocate_package(int client,int day_in, int day_out, int hotel_type)
+  private void temporary_package(int client,int day_in, int day_out, int hotel_type)
   {
-	  	int auction;
-	  	for (int day = day_in; day < day_out; day++)
-	  	{
-	  		auction = agent.getAuctionFor(TACAgent.CAT_HOTEL, hotel_type, day);
-	  		agent.setAllocation(auction, agent.getAllocation(auction) + 1);
-			if (items_available[auction] > 0)
-			{
-				items_available[auction] -= 1;
-			}
-	  	}
-
-		client_days[client][0] = day_in;
-		client_days[client][1] = day_out;
-	  	
-	  	auction = agent.getAuctionFor(TACAgent.CAT_FLIGHT,TACAgent.TYPE_INFLIGHT,day_in);
-		if (items_available[auction] > 0) { items_available[auction] -= 1; }
-	  	agent.setAllocation(auction, agent.getAllocation(auction) + 1);
-	  	
-	  	auction = agent.getAuctionFor(TACAgent.CAT_FLIGHT,TACAgent.TYPE_OUTFLIGHT,day_out);
-		if (items_available[auction] > 0) { items_available[auction] -= 1; }
-	  	agent.setAllocation(auction, agent.getAllocation(auction) + 1);
+	  	temporary_allocations[client][0] = day_in;
+		temporary_allocations[client][1] = day_out;
+		temporary_allocations[client][2] = hotel_type;
 	  	
   }
 
-  private void calculateAllocation() {
-    for (int i = 0; i < agent.getAuctionNo(); i++)
+  private void reset_items_available()
+{
+	items_available = new int[28];
+	hqw_available = new int[28];
+	 for (int i = 0; i < agent.getAuctionNo(); i++)
     {
 	items_available[i] = agent.getOwn(i);
     }
+	for (int i = 8; i < 16; i++)
+	{
+		hqw_available[i] = agent.getQuote(i).getHQW();
+	}
+}
 
-    agent.clearAllocation();
+  private int[][] temporary_allocations;
+  private int[][] current_allocations;
+  private int change_cost = 1000;
+  private void calculateAllocation() {
+    temporary_allocations = new int[8][3];
+    reset_items_available();
     
     for (int i = 0; i < 8; i++) {
-      int inFlight = agent.getClientPreference(i, TACAgent.ARRIVAL);
-      int outFlight = agent.getClientPreference(i, TACAgent.DEPARTURE);
-      int hotel = agent.getClientPreference(i, TACAgent.HOTEL_VALUE);
-      int type;
+	      int inFlight = agent.getClientPreference(i, TACAgent.ARRIVAL);
+	      int outFlight = agent.getClientPreference(i, TACAgent.DEPARTURE);
+	      int hotel = agent.getClientPreference(i, TACAgent.HOTEL_VALUE);
+	      int type;
 
-      // Get the flight preferences auction and remember that we are
-      // going to buy tickets for these days. (inflight=1, outflight=0)
-      int current_best = -999999;
-      int this_round_c = 0;
-      int this_round_e = 0;
-      int best_type; int best_this_round;
-      int current_best_in = 0;
-      int current_best_out = 0; int current_best_type = 0;
-      for (int in = 1; in <= 4; in++)
-      {
-    	  for (int out = in + 1; out <= 5; out++)
-    	  {
-    		  this_round_c = predictUtility(i,in,out,TACAgent.TYPE_CHEAP_HOTEL);
-    		  this_round_e = predictUtility(i,in,out,TACAgent.TYPE_GOOD_HOTEL);
-    		  if (this_round_c > this_round_e)
-    		  {
-    			  best_type = TACAgent.TYPE_CHEAP_HOTEL; best_this_round = this_round_c;
-    		  } else { best_type = TACAgent.TYPE_GOOD_HOTEL; best_this_round = this_round_e; }
-    		  
-    		  if (best_this_round > current_best)
-    		  {
-    			  current_best = best_this_round;
-    			  current_best_in = in;
-    			  current_best_out = out;
-    			  current_best_type = best_type;
-    		  }
-    	  }
-    	  
-      }
-      allocate_package(i,current_best_in,current_best_out,current_best_type);
-    }
+	      // Get the flight preferences auction and remember that we are
+	      // going to buy tickets for these days. (inflight=1, outflight=0)
+	      int current_best = -999999;
+	      int this_round_c = 0;
+	      int this_round_e = 0;
+	      int best_type; int best_this_round;
+	      int current_best_in = 0;
+	      int current_best_out = 0; int current_best_type = 0;
+	      for (int in = 1; in <= 4; in++)
+	      {
+	    	  for (int out = in + 1; out <= 5; out++)
+	    	  {
+	    		  this_round_c = predictUtility(i,in,out,TACAgent.TYPE_CHEAP_HOTEL);
+	    		  this_round_e = predictUtility(i,in,out,TACAgent.TYPE_GOOD_HOTEL);
+	    		  if (this_round_c > this_round_e)
+	    		  {
+	    			  best_type = TACAgent.TYPE_CHEAP_HOTEL; best_this_round = this_round_c;
+	    		  } else { best_type = TACAgent.TYPE_GOOD_HOTEL; best_this_round = this_round_e; }
+	    		  
+	    		  if (best_this_round > current_best)
+	    		  {
+	    			  current_best = best_this_round;
+	    			  current_best_in = in;
+	    			  current_best_out = out;
+	    			  current_best_type = best_type;
+	    		  }
+	    	  }
+		}
+	      temporary_package(i,current_best_in,current_best_out,current_best_type);
+	}
+      log.info(Arrays.deepToString(current_allocations));
+      log.info(Arrays.deepToString(temporary_allocations));
+    reset_items_available();
+      int temp_util = get_util(temporary_allocations);
+    reset_items_available();
+      int current_util = get_util(current_allocations);
+      log.info("Current Util: "+current_util+" ----- New util: "+temp_util+" ---- Change cost: "+change_cost);
+      if (current_util + change_cost > temp_util) { log.info("No change in strategy."); return; } else {
+	log.info("Altering strategy.");
+	agent.clearAllocation();
+		for (int client = 0; client < 8; client++) {
+			allocate_package(client,temporary_allocations[client][0],temporary_allocations[client][1],temporary_allocations[client][2]);
+		}
+		current_allocations = temporary_allocations;
+	}
+	entertainmentAllocation();
+
+  }
+private int buy_price = 60;
+private int min_buy = 80;
+private int sell_price = 70;
+private void entertainmentAllocation() {
+	for (int client = 0; client < 8; client++) {
+		int client_vals[] = new int[7];
+		client_vals[TACAgent.TYPE_ALLIGATOR_WRESTLING] = agent.getClientPreference(client,TACAgent.TYPE_ALLIGATOR_WRESTLING);
+		client_vals[TACAgent.TYPE_AMUSEMENT] = agent.getClientPreference(client,TACAgent.TYPE_AMUSEMENT);
+		client_vals[TACAgent.TYPE_MUSEUM] = agent.getClientPreference(client,TACAgent.TYPE_MUSEUM);
+		for (int d=current_allocations[client][0]; d < current_allocations[client][1]; d++)
+		{
+
+			int best = getBestEnt(client_vals);
+			if (client_vals[best] <= min_buy) { break; }
+			int auction = agent.getAuctionFor(TACAgent.CAT_ENTERTAINMENT,best,d);
+			agent.setAllocation(auction,agent.getAllocation(auction)+1);
+			client_vals[best] = 0;
+		}
+	}
+}
+
+private int getBestEnt(int[] client_vals)
+{
+	if ((client_vals[TACAgent.TYPE_ALLIGATOR_WRESTLING] > client_vals[TACAgent.TYPE_AMUSEMENT]) && (client_vals[TACAgent.TYPE_ALLIGATOR_WRESTLING] > client_vals[TACAgent.TYPE_MUSEUM])) {
+		return TACAgent.TYPE_ALLIGATOR_WRESTLING;
+	} else if ((client_vals[TACAgent.TYPE_AMUSEMENT] > client_vals[TACAgent.TYPE_MUSEUM])) {
+		return TACAgent.TYPE_AMUSEMENT;
+	} else { return TACAgent.TYPE_MUSEUM; }
+}
+
+private void allocate_package(int client,int day_in, int day_out, int hotel_type)
+{
+	int auction;
+	for (int day = day_in; day < day_out; day++)
+	{
+		auction = agent.getAuctionFor(TACAgent.CAT_HOTEL, hotel_type, day);
+		agent.setAllocation(auction, agent.getAllocation(auction) + 1);
+		if (items_available[auction] > 0)
+		{
+			items_available[auction] -= 1;
+		}
+		if (hqw_available[auction] > 0) 
+		{
+			hqw_available[auction] -= 1;
+		}
+	}
+	client_days[client][0] = day_in;
+	client_days[client][1] = day_out;
+	auction = agent.getAuctionFor(TACAgent.CAT_FLIGHT,TACAgent.TYPE_INFLIGHT,day_in);
+	if (items_available[auction] > 0) { items_available[auction] -= 1; }
+	agent.setAllocation(auction, agent.getAllocation(auction) + 1);
+
+	auction = agent.getAuctionFor(TACAgent.CAT_FLIGHT,TACAgent.TYPE_OUTFLIGHT,day_out);
+	if (items_available[auction] > 0) { items_available[auction] -= 1; }
+	agent.setAllocation(auction, agent.getAllocation(auction) + 1);
+}
+  private float HQW_abandon_cost = 0.8f;
+  private int get_util(int[][] allocations)
+  {
+	if (allocations[0][0] == 0) { return 0; }
+	int retVal = 0;
+	for (int i = 0; i < 8; i++)
+	{
+		retVal += predictUtility(i,allocations[i][0],allocations[i][1],allocations[i][2]);
+	}
+	for (int i = 8; i < 16; i++) {
+		if (hqw_available[i] > 0) { retVal -= hqw_available[i] * agent.getQuote(i).getBidPrice() * HQW_abandon_cost; }
+	}
+	return retVal;
   }
 
   private int nextEntType(int client, int lastType) {
-    int e1 = agent.getClientPreference(client, TACAgent.E1);
-    int e2 = agent.getClientPreference(client, TACAgent.E2);
-    int e3 = agent.getClientPreference(client, TACAgent.E3);
+    int e1 = agent.getClientPreference(client, TACAgent.TYPE_ALLIGATOR_WRESTLING);
+    int e2 = agent.getClientPreference(client, TACAgent.TYPE_AMUSEMENT);
+    int e3 = agent.getClientPreference(client, TACAgent.TYPE_MUSEUM);
 
     // At least buy what each agent wants the most!!!
     if ((e1 > e2) && (e1 > e3) && lastType == -1)
