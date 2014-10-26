@@ -175,7 +175,7 @@ private void allocationBids() {
 
 private float getBasicHotelAmount()
 {
-	return 150+(n_hotels_closed*35);
+	return 210+(n_hotels_closed*35);
 }
 
 private void hotelBids() {
@@ -189,6 +189,8 @@ private void hotelBids() {
 		int alloc = agent.getAllocation(i);
 		if ((alloc == 0) && (ask > 3)) { continue; }
 		bid.addBidPoint(16,1);
+		bid.addBidPoint(8,3);
+		bid.addBidPoint(4,5);
 		if ((hqw-alloc > 0) && (ask <= 10)) {
 			bid.addBidPoint(hqw-alloc,ask+1);
 		}
@@ -465,8 +467,8 @@ private int getLength(int client)
 
   }
 private int buy_price = 60;
-private int min_buy = 80;
-private int sell_price = 70;
+private int min_buy = 85;
+private int sell_price = 90;
 private void entertainmentAllocation() {
 	for (int client = 0; client < 8; client++) {
 		int client_vals[] = new int[7];
