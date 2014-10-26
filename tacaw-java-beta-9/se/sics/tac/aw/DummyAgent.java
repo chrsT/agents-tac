@@ -175,7 +175,7 @@ private void allocationBids() {
 
 private float getBasicHotelAmount()
 {
-	return 210+(n_hotels_closed*35);
+	return (300 + n_hotels_closed*25);
 }
 
 private void hotelBids() {
@@ -186,16 +186,14 @@ private void hotelBids() {
 		Quote quote = agent.getQuote(i);
 		int hqw = quote.getHQW();
 		float ask = quote.getBidPrice(); //TODO: getBidPrice() maybe?
+		float bid_amount = 0;
 		int alloc = agent.getAllocation(i);
-		if ((alloc == 0) && (ask > 3)) { continue; }
-		bid.addBidPoint(16,1);
-		bid.addBidPoint(8,3);
-		bid.addBidPoint(4,5);
-		if ((hqw-alloc > 0) && (ask <= 10)) {
-			bid.addBidPoint(hqw-alloc,ask+1);
-		}
+		bid.addBidPoint(16,1); bid.addBidPoint(8,3); bid.addBidPoint(4,5); bid.addBidPoint(3,8); bid.addBidPoint(2,14); bid.addBidPoint(1,20);
+		if ((hqw - alloc > 0) && (alloc > 0)) { bid.addBidPoint(hqw-alloc,ask+1); }
 		if (alloc > 0) {
-			bid.addBidPoint(alloc,getBasicHotelAmount());
+			bid_amount = getBasicHotelAmount();
+			if (ask > bid_amount) { bid_amount = ask + (20*n_hotels_closed); }
+			bid.addBidPoint(alloc,bid_amount);
 		}
 		agent.submitBid(bid);
 	}
@@ -370,7 +368,10 @@ private int getLength(int client)
   private float predicted_increase_multiplier_other_closed = 1.4f;
   private float predictHotelCost(float currentAskPrice, float currentBidPrice, boolean other_closed)
   {
-	return currentAskPrice;
+	float multiplier;
+	if (other_closed) { multiplier = predicted_increase_multiplier_other_closed; } else { multiplier = predicted_increase_multiplier; }
+	multiplier += 0.025*(8-n_hotels_closed);
+	return ((8-n_hotels_closed) * predicted_increase_time_period) + (currentAskPrice * multiplier);
   }
   
   private int otherHotelType(int hotelType)
@@ -388,6 +389,26 @@ private int getLength(int client)
 	  	temporary_allocations[client][0] = day_in;
 		temporary_allocations[client][1] = day_out;
 		temporary_allocations[client][2] = hotel_type;
+
+		int auction;
+
+		for (int day = day_in; day < day_out; day++)
+	{
+		auction = agent.getAuctionFor(TACAgent.CAT_HOTEL, hotel_type, day);
+		if (items_available[auction] > 0)
+		{
+			items_available[auction] -= 1;
+		}
+		if (hqw_available[auction] > 0) 
+		{
+			hqw_available[auction] -= 1;
+		}
+	}
+	auction = agent.getAuctionFor(TACAgent.CAT_FLIGHT,TACAgent.TYPE_INFLIGHT,day_in);
+	if (items_available[auction] > 0) { items_available[auction] -= 1; }
+
+	auction = agent.getAuctionFor(TACAgent.CAT_FLIGHT,TACAgent.TYPE_OUTFLIGHT,day_out);
+	if (items_available[auction] > 0) { items_available[auction] -= 1; }
 	  	
   }
 
@@ -407,7 +428,7 @@ private int getLength(int client)
 
   private int[][] temporary_allocations;
   private int[][] current_allocations;
-  private int change_cost = 1000;
+  private int change_cost = 500;
   private void calculateAllocation() {
     temporary_allocations = new int[8][3];
     reset_items_available();
@@ -466,9 +487,9 @@ private int getLength(int client)
 	entertainmentAllocation();
 
   }
-private int buy_price = 60;
+private int buy_price = 70;
 private int min_buy = 85;
-private int sell_price = 90;
+private int sell_price = 80;
 private void entertainmentAllocation() {
 	for (int client = 0; client < 8; client++) {
 		int client_vals[] = new int[7];
@@ -522,20 +543,31 @@ private void allocate_package(int client,int day_in, int day_out, int hotel_type
 	if (items_available[auction] > 0) { items_available[auction] -= 1; }
 	agent.setAllocation(auction, agent.getAllocation(auction) + 1);
 }
-  private float HQW_abandon_cost = 0.8f;
+  private float HQW_abandon_cost = 0.65f;
   private int get_util(int[][] allocations)
   {
 	if (allocations[0][0] == 0) { return 0; }
-	int retVal = 0;
+	int retVal = 0; int HQWWaste = 0;
 	for (int i = 0; i < 8; i++)
 	{
 		retVal += predictUtility(i,allocations[i][0],allocations[i][1],allocations[i][2]);
+		applyAvailable(allocations[i]);
 	}
 	for (int i = 8; i < 16; i++) {
-		if (hqw_available[i] > 0) { retVal -= hqw_available[i] * agent.getQuote(i).getBidPrice() * HQW_abandon_cost; }
+		if (hqw_available[i] > 0) { HQWWaste += hqw_available[i] * agent.getQuote(i).getBidPrice() * HQW_abandon_cost; }
 	}
-	return retVal;
+	log.fine("Raw Util: "+retVal+", HQW Wasted: "+HQWWaste+", Total Util: "+(retVal-HQWWaste));
+	return retVal-HQWWaste;
   }
+
+  private void applyAvailable(int[] allocations) {
+	int auction;
+	for (int day = allocations[0]; day < allocations[1]; day++) {
+		auction = agent.getAuctionFor(TACAgent.CAT_HOTEL, allocations[2], day);
+		if (hqw_available[auction] > 0) { hqw_available[auction] -= 1; }
+		if (items_available[auction] > 0) { items_available[auction] -= 1; }
+	}
+	}
 
   private int nextEntType(int client, int lastType) {
     int e1 = agent.getClientPreference(client, TACAgent.TYPE_ALLIGATOR_WRESTLING);
